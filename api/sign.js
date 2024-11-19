@@ -1,58 +1,29 @@
-import { IncomingForm } from 'formidable';
-import fs from 'fs';
-
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
+import { exec } from "child_process";
+import fs from "fs";
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method Not Allowed" });
   }
 
-  const form = new IncomingForm({ multiples: true });
+  const { ipa, p12, mobileprovision, password } = req.body;
 
-  form.parse(req, async (err, fields, files) => {
-    if (err) {
-      return res.status(500).json({ error: 'File upload failed' });
-    }
+  try {
+    // Save uploaded files to the temporary directory
+    fs.writeFileSync("/tmp/app.ipa", ipa);
+    fs.writeFileSync("/tmp/devcert.p12", p12);
+    fs.writeFileSync("/tmp/profile.mobileprovision", mobileprovision);
 
-    // Example: Save uploaded files temporarily
-    const ipaPath = files.ipa.filepath;
-    const p12Path = files.p12.filepath;
-    const mobileProvisionPath = files.mobileprovision.filepath;
-    const password = fields.password;
-
-    // Send to external signing API
-    try {
-      // Replace with actual API endpoint for signing
-      const signResponse = await fetch('https://example-signing-api.com/sign', {
-        method: 'POST',
-        body: JSON.stringify({
-          ipaPath,
-          p12Path,
-          mobileProvisionPath,
-          password,
-        }),
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      const result = await signResponse.json();
-
-      if (!signResponse.ok) {
-        throw new Error(result.error || 'Failed to sign IPA');
+    // Run the Zsign command
+    const command = `zsign -k /tmp/devcert.p12 -p ${password} -m /tmp/profile.mobileprovision -o /tmp/signed-app.ipa /tmp/app.ipa`;
+    exec(command, (error, stdout, stderr) => {
+      if (error) {
+        console.error(stderr);
+        return res.status(500).json({ error: stderr || error.message });
       }
-
-      return res.status(200).json({ downloadUrl: result.downloadUrl });
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
-    } finally {
-      // Cleanup temporary files
-      fs.unlinkSync(ipaPath);
-      fs.unlinkSync(p12Path);
-      fs.unlinkSync(mobileProvisionPath);
-    }
-  });
+      res.status(200).json({ message: "IPA signed successfully!", output: stdout });
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
